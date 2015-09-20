@@ -1,0 +1,314 @@
+#!/bin/bash
+set -e
+
+GIT_FILTER_ORPHANS_FIND(){
+	##create a list of all blobs
+	echo -e "building indexes\n"
+	declare -A fileIndex
+	declare -A bigObjectIndex
+	declare -A uniqueObjectIndex
+	declare -A allShasIndex
+
+	#build list of all files in index
+	list=`git ls-files | awk '{print "./"$1}'`
+	while read -r file; do
+		uniqueObjectIndex["${file}"]=1
+	done <<< "$list"
+
+	#build an index of every sha->file
+	allShas=`git rev-list --objects --all | sed -n 's/\w ./&/p'`
+	while read -r line; do
+		SHA=${line% *}
+		FILE=${line#* }
+		allShasIndex["${SHA}"]="./$FILE"
+	done <<< "$allShas"
+
+	#build an index of sha->size
+	bigObjects=`git gc && git verify-pack -v .git/objects/pack/pack-*.idx | sed -n 's/\(\w\+\) blob\W\+\([0-9]\+\) .*/\1 \2/p'`
+	while read -r line; do
+		SHA=${line% *}
+		SIZE=${line#* }
+		bigObjectIndex["${SHA}"]=$SIZE
+	done <<< "$bigObjects"
+
+	: >$SORT_FILE
+	#sort out any objects they are still in the repo
+	#create a gfo-sorted.txt file
+	for SHA in "${!bigObjectIndex[@]}"; do
+		FILE=${allShasIndex["${SHA}"]}
+		SIZE=${bigObjectIndex["${SHA}"]}
+		if [ -z "${FILE}" ]; then
+			continue
+		fi
+		if [[ ! ${uniqueObjectIndex["${FILE}"]} ]]; then
+			uniqueObjectIndex["${FILE}"]=1
+			echo 'storing: ' $FILE
+			echo "${SIZE} ${FILE}" >> "${SORT_FILE}"
+		fi
+	done;
+	sort -nrk1 "${SORT_FILE}" -o "${SORT_FILE}"
+}
+
+#eradicate the file or directory from existence
+GIT_FILTER_ORPHANS_PURGE(){
+	args=("$@")
+	tmp=""
+	if [ ${#args[@]} -eq 2 ]; then
+		tmp="${args[1]}"
+	fi
+	file="${args[0]}"
+	list=`cat "${file}"`
+	treeFilter=()
+	indexFilter=()
+	count=0
+	while read -r line; do
+		count=$((count+1))
+		file=${line#* }
+		echo $file
+		treeFilter+=("rm -f ${file};")
+		indexFilter+=("git rm -rf --cached --ignore-unmatch ${file};")
+	done <<< "$list"
+	cmd=(git filter-branch --force --prune-empty)
+	if [ ! -z "${tmp}" ]; then
+		cmd+=(-d "${tmp}")
+	fi
+	cmd+=(--tree-filter '"'"${treeFilter[@]}"'"')
+	cmd+=(--index-filter '"'"${indexFilter[@]}"'"')
+	cmd+=(--tag-name-filter cat -- --all)
+	eval "${cmd[@]}"
+}
+
+#expire old refs and run garbage collection
+GIT_FILTER_ORPHANS_GC(){
+	if [ ! -d ".git/refs/original" ]; then
+		echo 'No backup reference found @.git/refs/original'
+		exit
+	fi
+	git for-each-ref --format='%(refname)' refs/original | xargs -n 1 git update-ref -d
+	git reflog expire --expire=now --all
+	git repack -ad
+	git prune
+}
+
+
+#update all refs and tags on remote
+GIT_FILTER_ORPHANS_UPDATE(){
+	echo "Updating repo: ${REPO}"
+	git push --force --all
+	git push --force --tags
+}
+
+#refresh a filtered repo, move a backup of the current and reclone into CWD
+GIT_FILTER_ORPHANS_CLONE(){
+	bak="${REPO}.gfo.bak"
+	tmp=".gfo.tmp"
+	tmpbak="${bak}"
+	count=1
+	while true; do
+		if [ ! -d "${tmpbak}" ]; then
+			break
+		fi
+		count=$((count+1))
+		tmpbak="${bak}_${count}"
+	done
+	bak="${tmpbak}"
+	echo "moving files to backup and cloning..."
+	rm -rf "${tmp}"
+	mkdir "${bak}"
+	mkdir "${tmp}"
+	#move files to backup
+	ls -A | grep -v "^${bak}" | xargs -I file mv file "${bak}"
+	#clone into current dir
+	git clone file://"${bak}" "${tmp}"
+	ls -A "${tmp}" | xargs -I file mv "${tmp}/"file .
+	rmdir "${tmp}"
+	cp -f "${bak}"/.git/config .git/
+}
+
+#parse arguments and call corresponding methods
+GIT_FILTER_ORPHANS_PARSE(){
+	argCount=${#args[@]}
+	tmp=""
+	#no args, show help
+	if [ $argCount -eq 0 ]; then
+		GIT_FILTER_ORPHANS_HELP
+	else
+		if [ $argCount -eq 4 ]; then
+			case "${args[2]}" in
+				--tmp)
+					tmp="${args[3]}"
+					;;
+			esac
+		fi
+		case "${args[0]}" in
+			find)
+				GIT_FILTER_ORPHANS_FIND
+				;;
+			gc)
+				GIT_FILTER_ORPHANS_GC
+				;;
+			clone)
+				GIT_FILTER_ORPHANS_CLONE
+				;;
+			update)
+				GIT_FILTER_ORPHANS_UPDATE
+				;;
+			filter)
+				if [ $argCount -lt 2 ]; then
+					echo 'Error: Must provide a file or directory path with --filter'
+					exit 0
+				fi
+				GIT_FILTER_ORPHANS_PURGE "${args[1]}" "${tmp}"
+				;;
+			purge) 
+				if [ $argCount -lt 2 ]; then
+					echo 'Error: Must provide a path to a gfo-sorted list file with --purge'
+					exit 0
+				elif [ ! -f "${args[1]}" ]; then
+				   	echo 'Error: No file found matching "'"${args[1]}"'"'
+					exit 0
+				fi
+				GIT_FILTER_ORPHANS_PURGE "${args[1]}" "${tmp}"
+				;;
+			help)
+				GIT_FILTER_ORPHANS_HELP "${args[@]:1}"
+				;;
+			*)
+				echo 'Error: invalid parameter'
+				exit 1
+				;;
+		esac
+	fi
+}
+
+
+#git clone --no-hardlinks repo new
+GIT_FILTER_ORPHANS(){
+	local args=("$@")
+	local CWD=`pwd`
+	local SORT_FILE='gfo-sorted.txt'
+	local REPO="`git config --get-regexp '.url'`"
+	local REPO_ROOT=""
+	#scope vars
+	REPO=${REPO#*/}
+	isBare=`git rev-parse --is-bare-repository`
+	#get repo root
+	if [ "${isBare}" == "true" ]; then
+		REPO_ROOT=`git rev-parse --git-dir`
+		if [ "${REPO_ROOT}" == "." ]; then
+			REPO_ROOT="$CWD"
+		fi
+	else
+		REPO_ROOT=`git rev-parse --show-toplevel`
+	fi
+	if [ -z "${REPO}" ]; then
+		#bypass error if help command
+		case "${args[0]}" in
+			help)
+				GIT_FILTER_ORPHANS_HELP "${args[@]:1}"
+				exit
+				;;
+		esac
+		echo 'Error: not a git repo'
+		echo 'use git-filter-branch -h'
+		exit 0
+	fi
+	#chdir to repo root
+	if [ "${REPO_ROOT}" != "${CWD}" ]; then
+		echo "chdir ${CWD} -> ${REPO_ROOT}"
+		cd "${REPO_ROOT}"
+	fi
+	#parse params and call final method
+	GIT_FILTER_ORPHANS_PARSE
+}
+
+
+#display help message
+GIT_FILTER_ORPHANS_HELP(){
+	args=("$@")
+	GIT_USER="${args[0]}"
+	CLONE_REPO="${args[1]}"
+	if [ -z "${GIT_USER}" ]; then
+		GIT_USER="<username>"
+	fi
+	if [ -z "${CLONE_REPO}" ]; then
+		CLONE_REPO="<clone-repo>"
+	fi
+cat <<-EOL
+
+Git-filter-orphans will find all your orphaned objects and
+eradicate them from your git history and repo completely.
+
+
+COMMANDS
+--------
+  find         -find all orphan objects and store them in a list(${SORT_FILE})
+  update       -update your new repo and force push to remote
+  clone        -make a backup of your current repo and clone from it in: ${REPO_ROOT}
+  gc           -run manual garbage collection on repo (potentially dangerous)
+  filter PATH  -filter a single orphaned file or directory
+    --tmp DIR    -same as below
+  purge FILE   -purge an object list, expects a gfo-sorted.txt type of list
+    --tmp DIR    -an off-disk temporary directory to optimize the filter process
+                  the directory will be created and deleted on completion
+  help GIT-USERNAME CLONE-REPO
+               -this menu, you can pass a username and clone-repo name into the params
+                be used in place of <username> and <clone-repo> below
+  Note: might be a good idea to test this on a cloned version of your repo
+
+
+
+EXAMPLES
+--------
+  - build list file -> gfo-sorted.txt
+  $ ${REPO}> ~/git-filter-orphans find
+
+  - confirm contents of the generated list
+  $ ${REPO}> cat gfo-sorted.txt
+
+  - purge the list created in "gfo-sorted.txt":
+  $ ${REPO}> ~/git-filter-orphans purge gfo-sorted.txt
+
+
+COMPLETE GUIDE - READ FIRST
+---------------------------
+This assumes you want to create a clone of your repo for liability
+purposes and have already created a new repo for this.
+
+#create the clone
+  $ > git clone --bare git@github.com:${GIT_USER}/${REPO} ${REPO}.git
+  $ > cd ${REPO}.git
+  $ ${REPO}.git> git push --mirror git@github.com:${GIT_USER}/${CLONE_REPO}
+
+#clone the new remote repo
+  $ ${REPO}.git> cd .. && git clone git@github.com:${GIT_USER}/${CLONE_REPO} && cd "${CLONE_REPO}"
+
+#create a ${SORT_FILE} file of orphaned objects and their size in bytes
+  $ ${CLONE_REPO}> ~/git-filter-orphans find
+
+#the ${SORT_FILE} looks good
+#lets delete the items in it with git-filter-branch
+  $ ${CLONE_REPO}> ~/git-filter-orphans purge ${SORT_FILE}
+
+#for this next step we need to clean our old references
+#the easiest way is to just clone the repo locally and copy your backup git config
+  $ ${CLONE_REPO}> ~/git-filter-orphan clone
+	
+#or run the manual GC actions needed to clear the repo of it's history, but be careful,
+#the git commands ran here can be volatile, might want to make a backup
+#see: http://git-scm.com/docs/git-filter-branch#_checklist_for_shrinking_a_repository
+  $ ${CLONE_REPO}> ~/git-filter-orphans gc
+
+#now we have a clean repo ready to be pushed
+  $ ${CLONE_REPO}> ~/git-filter-orphans update
+
+EOL
+	if [ "${CLONE_REPO}" == "${REPO}" ]; then
+		echo "---"
+		echo "Warning: Your target cloned repo is the same as your current!"		
+		echo "---"
+	fi
+}
+
+GIT_FILTER_ORPHANS $@
+
