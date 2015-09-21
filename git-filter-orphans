@@ -104,6 +104,7 @@ GIT_FILTER_ORPHANS_FILTER(){
 GIT_FILTER_ORPHANS_RMDIR(){
 	args=("$@")
 	tmp=""
+	recurse=false
 	file="${args[0]}"
 	if [ ${#args[@]} -eq 2 ]; then
 		tmp="${args[1]}"
@@ -113,10 +114,30 @@ GIT_FILTER_ORPHANS_RMDIR(){
 		cmd+=(-d '"'"$tmp"'"')
 	fi
 	#recursive
-	cmd+=(--tree-filter "'rm -rf \"$file\"'")
-	cmd+=(--index-filter "'git rm -rf --cached --ignore-unmatch \"$file\"'")
+	if [ -f "$file" ]; then
+		recurse=true
+		treeFilter="$REPO_ROOT/.gfo.filter.tree"
+		indexFilter="$REPO_ROOT/.gfo.filter.index"
+		: > "$treeFilter"
+		: > "$indexFilter"
+		chmod +x "$treeFilter"
+		chmod +x "$indexFilter"
+		cat "$file" | while read line; do
+			file=${line#* }
+			echo "rm -rf \"$file\"" >> "$treeFilter"
+			echo "git rm -rf --cached --ignore-unmatch \"$file\"" >> "$indexFilter"
+		done
+		cmd+=(--tree-filter "\"$treeFilter\"")
+		cmd+=(--index-filter "\"$indexFilter\"")
+	else
+		cmd+=(--tree-filter "'rm -rf \"$file\"'")
+		cmd+=(--index-filter "'git rm -rf --cached --ignore-unmatch \"$file\"'")
+	fi
 	cmd+=(--tag-name-filter cat -- --all)
 	echo "${cmd[@]}" | xargs git filter-branch
+	if $recurse; then
+		rm -f "$treeFilter" "$indexFilter"
+	fi
 	if [ $? -gt 0 ]; then
 		echo "file: $file not found in tree, recursing..."
 		exit
@@ -226,7 +247,6 @@ GIT_FILTER_ORPHANS_PARSE(){
 					echo 'Error: Must provide a file or directory path with "rmdir"'
 					exit 0
 				fi
-				GIT_FILTER_ORPHANS_CHECKOUT
 				GIT_FILTER_ORPHANS_RMDIR "${args[1]}" "$tmp"
 				;;
 			filter)
@@ -234,7 +254,6 @@ GIT_FILTER_ORPHANS_PARSE(){
 					echo 'Error: Must provide a file or directory path with "filter"'
 					exit 0
 				fi
-				GIT_FILTER_ORPHANS_CHECKOUT
 				GIT_FILTER_ORPHANS_FILTER "${args[1]}" "$tmp"
 				;;
 			purge) 
@@ -245,7 +264,6 @@ GIT_FILTER_ORPHANS_PARSE(){
 				   	echo 'Error: No file found matching "'"${args[1]}"'"'
 					exit 0
 				fi
-				GIT_FILTER_ORPHANS_CHECKOUT
 				GIT_FILTER_ORPHANS_PURGE "${args[1]}" "$tmp"
 				;;
 			help)
@@ -283,7 +301,6 @@ GIT_FILTER_ORPHANS(){
 		#bypass error if help command
 		case "${args[0]}" in
 			help)
-				GIT_FILTER_ORPHANS_CHECKOUT_BRANCHES
 				GIT_FILTER_ORPHANS_HELP "${args[@]:1}"
 				exit
 				;;
@@ -328,13 +345,15 @@ COMMANDS
   update       -update your new repo and force push to remote
   clone        -make a backup of your current repo and clone from it in: $REPO_ROOT
   gc           -run manual garbage collection on repo (potentially dangerous)
-  checkout     -checkout all remote branches
+  checkout     -checkout all remote branches, !IMPORTANT - this must be done
+                before you filter in order to filter all branches properly for push
   purge FILE   -purge an object list, expects a gfo-sorted.txt type of list
     --tmp DIR    -an off-disk temporary directory to optimize the filter process
                   the directory will be created and deleted on completion
-  filter PATH  -filter a single orphaned file or directory, will not recurse a directory
+  rmdir PATH   -recursively filter all items of a directory[PATH]; you can also pass in a text
+                based file similar to gfo-sorted.txt and use it as a list of directories to delete
     --tmp DIR    -same as above
-  rmdir PATH   -recursively filter all items of a directory
+  filter PATH  -filter a single orphaned file or directory, will not recurse a directory
     --tmp DIR    -same as above
   help GIT-USERNAME CLONE-REPO
                -this menu, you can pass a username and clone-repo name into the params
@@ -366,6 +385,9 @@ purposes and have already created a new repo for this.
 
 #clone the new remote repo
   $ ${REPO}.git> cd .. && git clone git@github.com:$GIT_USER/$CLONE_REPO && cd "$CLONE_REPO"
+
+#checkout all the branches, or you can manually checkout branches, just be sure to check back in to master
+  $ $CLONE_REPO> ~/git-filter-orphan checkout
 
 #create a $SORT_FILE file of orphaned objects and their size in bytes
   $ $CLONE_REPO> ~/git-filter-orphans find

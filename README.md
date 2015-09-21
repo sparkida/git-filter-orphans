@@ -12,13 +12,15 @@ COMMANDS
   update       -update your new repo and force push to remote
   clone        -make a backup of your current repo and clone from it in: $REPO_ROOT
   gc           -run manual garbage collection on repo (potentially dangerous)
-  checkout     -checkout all remote branches
+  checkout     -checkout all remote branches, !IMPORTANT - this must be done
+                before you filter in order to filter all branches properly for push
   purge FILE   -purge an object list, expects a gfo-sorted.txt type of list
     --tmp DIR    -an off-disk temporary directory to optimize the filter process
                   the directory will be created and deleted on completion
-  filter PATH  -filter a single orphaned file or directory, will not recurse a directory
+  rmdir PATH   -recursively filter all items of a directory[PATH]; you can also pass in a text
+                based file similar to gfo-sorted.txt and use it as a list of directories to delete
     --tmp DIR    -same as above
-  rmdir PATH   -recursively filter all items of a directory
+  filter PATH  -filter a single orphaned file or directory, will not recurse a directory
     --tmp DIR    -same as above
   help GIT-USERNAME CLONE-REPO
                -this menu, you can pass a username and clone-repo name into the params
@@ -43,21 +45,24 @@ COMPLETE GUIDE - READ FIRST
 This assumes you want to create a clone of your repo for liability
 purposes and have already created a new repo for this.
 
-- create the clone
+#create the clone
   $ > git clone --bare git@github.com:$GIT_USER/$REPO ${REPO}.git
   $ > cd ${REPO}.git
   $ ${REPO}.git> git push --mirror git@github.com:$GIT_USER/$CLONE_REPO
 
-- clone the new remote repo
+#clone the new remote repo
   $ ${REPO}.git> cd .. && git clone git@github.com:$GIT_USER/$CLONE_REPO && cd "$CLONE_REPO"
 
-- create a $SORT_FILE file of orphaned objects and their size in bytes
+#checkout all the branches, or you can manually checkout branches, just be sure to check back in to master
+  $ $CLONE_REPO> ~/git-filter-orphan checkout
+
+#create a $SORT_FILE file of orphaned objects and their size in bytes
   $ $CLONE_REPO> ~/git-filter-orphans find
 
-- the $SORT_FILE looks good...
-  lets delete the items in it with git-filter-branch
+#the $SORT_FILE looks good
+#lets delete the items in it with git-filter-branch
   $ $CLONE_REPO> ~/git-filter-orphans purge $SORT_FILE
 
-- now we have a clean repo ready to be pushed, this runs gc
+#now we have a clean repo ready to be pushed, this runs gc
   $ $CLONE_REPO> ~/git-filter-orphan update
 
