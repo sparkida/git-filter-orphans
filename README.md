@@ -12,6 +12,8 @@ COMMANDS
   update       -update your new repo and force push to remote
   clone        -make a backup of your current repo and clone from it in: $REPO_ROOT
   gc           -run manual garbage collection on repo (potentially dangerous)
+  rebase       -similar to checkout, but used to important rewrites already made to a remote repo
+                so you don't need to reclone the entire repo again
   checkout     -checkout all remote branches, !IMPORTANT - this must be done
                 before you filter in order to filter all branches properly for push
   purge FILE   -purge an object list, expects a gfo-sorted.txt type of list
@@ -28,16 +30,23 @@ COMMANDS
   Note: might be a good idea to test this on a cloned version of your repo
 
 
+INSTALL gfo
+-----------
+```
+cd && git clone https://github.com/sparkida/git-filter-orphans
+cd /usr/bin && sudo ln -s ~/git-filter-orphans/git-filter-orphans gfo
+```
+
 EXAMPLES
 --------
   - build list file -> gfo-sorted.txt
-  $ $REPO> ~/git-filter-orphans find
+  $ $REPO> gfo find
 
   - confirm contents of the generated list
   $ $REPO> cat gfo-sorted.txt
 
   - purge the list created in "gfo-sorted.txt":
-  $ $REPO> ~/git-filter-orphans purge gfo-sorted.txt
+  $ $REPO> gfo purge gfo-sorted.txt
 
 
 COMPLETE GUIDE - READ FIRST
@@ -54,15 +63,19 @@ purposes and have already created a new repo for this.
   $ ${REPO}.git> cd .. && git clone git@github.com:$GIT_USER/$CLONE_REPO && cd "$CLONE_REPO"
 
 #checkout all the branches, or you can manually checkout branches, just be sure to check back in to master
-  $ $CLONE_REPO> ~/git-filter-orphan checkout
+  $ $CLONE_REPO> gfo checkout
 
 #create a $SORT_FILE file of orphaned objects and their size in bytes
-  $ $CLONE_REPO> ~/git-filter-orphans find
+  $ $CLONE_REPO> gfo find
 
 #the $SORT_FILE looks good
 #lets delete the items in it with git-filter-branch
-  $ $CLONE_REPO> ~/git-filter-orphans purge $SORT_FILE
+  $ $CLONE_REPO> gfo purge $SORT_FILE
 
 #now we have a clean repo ready to be pushed, this runs gc
-  $ $CLONE_REPO> ~/git-filter-orphan update
+  $ $CLONE_REPO> gfo update
+
+#!important anyone else using this repo will need to fetch all the updated refs
+#but you will not have to do this
+  $ $CLONE_REPO> gfo rebase
 
