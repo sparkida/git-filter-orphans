@@ -1,3 +1,4 @@
+
 Git-filter-orphans
 ==================
 
@@ -22,7 +23,6 @@ COMMANDS
                -this menu, you can pass a username and clone-repo name into the params
                 be used in place of <username> and <clone-repo> below
   Note: might be a good idea to test this on a cloned version of your repo
-
 
 
 EXAMPLES
@@ -57,14 +57,6 @@ purposes and have already created a new repo for this.
 #lets delete the items in it with git-filter-branch
   $ $CLONE_REPO> ~/git-filter-orphans purge $SORT_FILE
 
-#for this next step we need to clean our old references
-#the easiest way is to just clone the repo locally and copy your backup git config
-  $ $CLONE_REPO> ~/git-filter-orphan clone
-	
-#or run the manual GC actions needed to clear the repo of it's history, but be careful,
-#the git commands ran here can be volatile, might want to make a backup
-#see: [](http://git-scm.com/docs/git-filter-branch#_checklist_for_shrinking_a_repository)
-  $ $CLONE_REPO> ~/git-filter-orphans gc
+#now we have a clean repo ready to be pushed, this runs gc
+  $ $CLONE_REPO> ~/git-filter-orphan update
 
-#now we have a clean repo ready to be pushed
-  $ $CLONE_REPO> ~/git-filter-orphans update

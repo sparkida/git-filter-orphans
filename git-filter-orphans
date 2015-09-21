@@ -67,8 +67,8 @@ GIT_FILTER_ORPHANS_PURGE(){
 	fi
 	cat "$file" | while read line; do
 		file=${line#* }
-		echo "rm -f "'"'"$file"'"' >> "$treeFilter"
-		echo "git rm --cached --ignore-unmatch "'"'"$file"'"' >> "$indexFilter"
+		echo "rm -f \"$file\"" >> "$treeFilter"
+		echo "git rm --cached --ignore-unmatch \"$file\"" >> "$indexFilter"
 	done
 
    	cmd=(--force --prune-empty)
@@ -126,14 +126,14 @@ GIT_FILTER_ORPHANS_RMDIR(){
 
 #expire old refs and run garbage collection
 GIT_FILTER_ORPHANS_GC(){
-	if [ ! -d ".git/refs/original" ]; then
-		echo 'No backup reference found @.git/refs/original'
-		exit
+	if [ -d ".git/refs/original" ]; then
+		echo 'deleting backup references'
+		git for-each-ref --format='%(refname)' refs/original | xargs -n 1 git update-ref -d
 	fi
-	git for-each-ref --format='%(refname)' refs/original | xargs -n 1 git update-ref -d
+	echo 'expiring reflog'
 	git reflog expire --expire=now --all
-	git repack -ad
-	git prune
+	git gc --prune=now --aggressive
+	rm -rf .git/refs/original
 }
 
 
@@ -244,7 +244,7 @@ GIT_FILTER_ORPHANS(){
 	local args=("$@")
 	local CWD=`pwd`
 	local SORT_FILE='gfo-sorted.txt'
-	local REPO="`git config --get-regexp '.url'`"
+	local REPO="`git config --get-regexp '.url' | head -n 1`"
 	local REPO_ROOT=""
 	#scope vars
 	REPO=${REPO#*/}
@@ -319,7 +319,6 @@ COMMANDS
   Note: might be a good idea to test this on a cloned version of your repo
 
 
-
 EXAMPLES
 --------
   - build list file -> gfo-sorted.txt
@@ -352,17 +351,8 @@ purposes and have already created a new repo for this.
 #lets delete the items in it with git-filter-branch
   $ $CLONE_REPO> ~/git-filter-orphans purge $SORT_FILE
 
-#for this next step we need to clean our old references
-#the easiest way is to just clone the repo locally and copy your backup git config
-  $ $CLONE_REPO> ~/git-filter-orphan clone
-	
-#or run the manual GC actions needed to clear the repo of it's history, but be careful,
-#the git commands ran here can be volatile, might want to make a backup
-#see: http://git-scm.com/docs/git-filter-branch#_checklist_for_shrinking_a_repository
-  $ $CLONE_REPO> ~/git-filter-orphans gc
-
-#now we have a clean repo ready to be pushed
-  $ $CLONE_REPO> ~/git-filter-orphans update
+#now we have a clean repo ready to be pushed, this runs gc
+  $ $CLONE_REPO> ~/git-filter-orphan update
 
 EOL
 	if [ "$CLONE_REPO" == "$REPO" ]; then
