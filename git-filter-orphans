@@ -128,7 +128,9 @@ GIT_FILTER_ORPHANS_RMDIR(){
 GIT_FILTER_ORPHANS_GC(){
 	if [ -d ".git/refs/original" ]; then
 		echo 'deleting backup references'
+		set +e
 		git for-each-ref --format='%(refname)' refs/original | xargs -n 1 git update-ref -d
+		set -e
 	fi
 	echo 'expiring reflog'
 	git reflog expire --expire=now --all
@@ -136,12 +138,25 @@ GIT_FILTER_ORPHANS_GC(){
 	rm -rf .git/refs/original
 }
 
+#check out all remote branch refs
+GIT_FILTER_ORPHANS_CHECKOUT(){
+	echo 'Checking out branches'
+	set +e
+	git branch -r | tail -n +2 | while read remote;	do
+		branch=${remote#*/}
+		git checkout "$branch" 2>> /dev/null
+	done
+	set -e
+	git checkout "$MAIN_BRANCH"
+}
 
 #update all refs and tags on remote
 GIT_FILTER_ORPHANS_UPDATE(){
 	echo "Updating repo: $REPO"
-	git push --force --all
-	git push --force --tags
+	if [ -d ".git/refs/original" ]; then
+		GIT_FILTER_ORPHANS_GC
+	fi
+	git push --mirror
 }
 
 #refresh a filtered repo, move a backup of the current and reclone into CWD
@@ -203,11 +218,15 @@ GIT_FILTER_ORPHANS_PARSE(){
 			update)
 				GIT_FILTER_ORPHANS_UPDATE
 				;;
+			checkout)
+				GIT_FILTER_ORPHANS_CHECKOUT
+				;;
 			rmdir)
 				if [ $argCount -lt 2 ]; then
 					echo 'Error: Must provide a file or directory path with "rmdir"'
 					exit 0
 				fi
+				GIT_FILTER_ORPHANS_CHECKOUT
 				GIT_FILTER_ORPHANS_RMDIR "${args[1]}" "$tmp"
 				;;
 			filter)
@@ -215,6 +234,7 @@ GIT_FILTER_ORPHANS_PARSE(){
 					echo 'Error: Must provide a file or directory path with "filter"'
 					exit 0
 				fi
+				GIT_FILTER_ORPHANS_CHECKOUT
 				GIT_FILTER_ORPHANS_FILTER "${args[1]}" "$tmp"
 				;;
 			purge) 
@@ -225,6 +245,7 @@ GIT_FILTER_ORPHANS_PARSE(){
 				   	echo 'Error: No file found matching "'"${args[1]}"'"'
 					exit 0
 				fi
+				GIT_FILTER_ORPHANS_CHECKOUT
 				GIT_FILTER_ORPHANS_PURGE "${args[1]}" "$tmp"
 				;;
 			help)
@@ -238,7 +259,6 @@ GIT_FILTER_ORPHANS_PARSE(){
 	fi
 }
 
-
 #git clone --no-hardlinks repo new
 GIT_FILTER_ORPHANS(){
 	local args=("$@")
@@ -246,6 +266,7 @@ GIT_FILTER_ORPHANS(){
 	local SORT_FILE='gfo-sorted.txt'
 	local REPO="`git config --get-regexp '.url' | head -n 1`"
 	local REPO_ROOT=""
+	local MAIN_BRANCH="`git branch | sed -n 's/\* \(.*\)/\1/p'`"
 	#scope vars
 	REPO=${REPO#*/}
 	isBare=`git rev-parse --is-bare-repository`
@@ -262,6 +283,7 @@ GIT_FILTER_ORPHANS(){
 		#bypass error if help command
 		case "${args[0]}" in
 			help)
+				GIT_FILTER_ORPHANS_CHECKOUT_BRANCHES
 				GIT_FILTER_ORPHANS_HELP "${args[@]:1}"
 				exit
 				;;
@@ -306,6 +328,7 @@ COMMANDS
   update       -update your new repo and force push to remote
   clone        -make a backup of your current repo and clone from it in: $REPO_ROOT
   gc           -run manual garbage collection on repo (potentially dangerous)
+  checkout     -checkout all remote branches
   purge FILE   -purge an object list, expects a gfo-sorted.txt type of list
     --tmp DIR    -an off-disk temporary directory to optimize the filter process
                   the directory will be created and deleted on completion
