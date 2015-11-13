@@ -216,7 +216,7 @@ GIT_FILTER_ORPHANS_CHECKOUT(){
 	set +e
 	git branch -r | tail -n +2 | while read remote;	do
 		branch=${remote#*/}
-		git checkout "$branch" 2>> /dev/null
+		git checkout "$branch" 2> /dev/null
 		if $rebase; then
 			if [ "$branch" == "$MAIN_BRANCH" ]; then
 				git reset --hard FETCH_HEAD
@@ -231,7 +231,7 @@ GIT_FILTER_ORPHANS_CHECKOUT(){
 
 GIT_FILTER_ORPHANS_RESET_REPO(){
 	#clone the current version and reset remote repo
-	git bundle .tmp.clone
+	git clone . .tmp.clone
 	#copy config
 	cd .tmp.clone && rm -rf .git
 	cp -rf ../.git .
@@ -239,8 +239,9 @@ GIT_FILTER_ORPHANS_RESET_REPO(){
 	git reset --hard $initialCommit
 	#delete tags
 	git tag -l | while read tag; do
-		git push origin ":$tag"
+		git push origin ":$tag" 2> /dev/null
 	done
+	git push --all --force
 	cd .. && rm -rf .tmp.clone
 }
 
@@ -255,7 +256,7 @@ GIT_FILTER_ORPHANS_UPDATE(){
 	fi
 	echo "Updating refs..."
 	git push --all --force
-	git push --tags --force
+	git push --tags
 }
 
 #refresh a filtered repo, move a backup of the current and reclone into CWD
