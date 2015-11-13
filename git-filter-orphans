@@ -1,5 +1,31 @@
 #!/bin/bash
 set -e
+
+GIT_FILTER_ORPHANS_FIND_BRANCHES(){
+	from="$@"
+	if [ -z $from ]; then
+		echo finding all branches
+	else
+		echo finding all branches newer than: `date --date="@${from}"`
+	fi
+	branchIndex=`git for-each-ref --sort=-committerdate --format='%(refname),%(committerdate)' refs/remotes | sed 's/refs\/remotes\/origin\///g'`
+	#build branch index of name -> last updated
+	while read -r line; do
+		branch="${line%,*}"
+		line="${line##*,}"
+		date=`date --date="${line% [-+]*}" +"%s"`
+		if [ -z $from ] || [ $from -le $date ]; then
+			branches["$branch"]="$date"
+		fi
+	done <<< "$branchIndex"
+	#make sure some branches existed
+	if [ ${#branches[@]} -eq 0 ]; then
+		echo "no branches found beyond this date!"
+		exit 1
+	fi
+	echo "${#branches[@]} found...processing"
+}
+
 GIT_FILTER_ORPHANS_FIND(){
 	##create a list of all blobs
 	echo -e "building indexes\n"
@@ -7,20 +33,38 @@ GIT_FILTER_ORPHANS_FIND(){
 	declare -A bigObjectIndex
 	declare -A uniqueObjectIndex
 	declare -A allShasIndex
-
+	percent=0
+	count=0
+	branchesLength=${#branches[@]}
+	oldIFS=$IFS
+	IFS=$'\n'
 	#build list of all files in index
-	list=`git ls-files | awk '{print "./"$1}'`
-	while read -r file; do
-		uniqueObjectIndex["$file"]=1
-	done <<< "$list"
+	for branch in "${!branches[@]}"; do
+		count=$((count+1))
+		percent=`awk "BEGIN {printf \"%.2f\",${count}/${branchesLength}*100}"`
+		echo "(%$percent)Scanning branch: ${branch}"
+		list=(`git ls-tree -r origin/$branch --name-only`)
+		for file in "${list[@]}"; do
+			uniqueObjectIndex["./$file"]=1
+		done
+	done
+
+	#echo 'Scan complete!'
+	echo 'Indexing all your objects...'
 
 	#build an index of every sha->file
-	allShas=`git rev-list --objects --all | sed -n 's/\w ./&/p'`
-	while read -r line; do
+	allShas=(`git rev-list --objects --all | sed -n 's/\w ./&/p'`)
+	allShasCount=${#allShas[@]}
+	percent=0
+	count=0
+	for line in "${allShas[@]}"; do
+		count=$((count+1))
+		percent=`awk "BEGIN {printf \"%.2f\",${count}/${allShasCount}*100}"`
+		echo -ne "                                     \r  ${count}/${allShasCount} indexes...(%$percent)\r"
 		SHA=${line% *}
 		FILE=${line#* }
 		allShasIndex["$SHA"]="./$FILE"
-	done <<< "$allShas"
+	done
 
 	#build an index of sha->size
 	bigObjects=`git gc && git verify-pack -v .git/objects/pack/pack-*.idx | sed -n 's/\(\w\+\) blob\W\+\([0-9]\+\) .*/\1 \2/p'`
@@ -43,10 +87,9 @@ GIT_FILTER_ORPHANS_FIND(){
 		if [[ ! ${uniqueObjectIndex["$FILE"]} ]]; then
 			count=$((count+1))
 			uniqueObjectIndex["$FILE"]=1
-			echo 'indexed: ' $FILE
 			echo "$SIZE $FILE" >> "$SORT_FILE"
 		fi
-	done;
+	done
 	sort -nrk1 "$SORT_FILE" -o "$SORT_FILE"
 	echo "$count files indexed in $SORT_FILE"
 }
@@ -75,7 +118,7 @@ GIT_FILTER_ORPHANS_PURGE(){
 	if [ ! -z "$tmp" ]; then
 		cmd+=(-d "$tmp")
 	fi
-	cmd+=(--tree-filter "\"$treeFilter\"")
+	#cmd+=(--tree-filter "\"$treeFilter\"")
 	cmd+=(--index-filter "\"$indexFilter\"")
 	cmd+=(--tag-name-filter cat -- --all)
 	echo "${cmd[@]}" | xargs git filter-branch
@@ -94,7 +137,7 @@ GIT_FILTER_ORPHANS_FILTER(){
 	if [ ! -z "$tmp" ]; then
 		cmd+=(-d '"'"$tmp"'"')
 	fi
-	cmd+=(--tree-filter "'rm -f \"$file\"'")
+	#cmd+=(--tree-filter "'rm -f \"$file\"'")
 	cmd+=(--index-filter "'git rm --cached --ignore-unmatch \"$file\"'")
 	cmd+=(--tag-name-filter cat -- --all)
 	echo "${cmd[@]}" | xargs git filter-branch
@@ -127,10 +170,10 @@ GIT_FILTER_ORPHANS_RMDIR(){
 			echo "rm -rf \"$file\"" >> "$treeFilter"
 			echo "git rm -rf --cached --ignore-unmatch \"$file\"" >> "$indexFilter"
 		done
-		cmd+=(--tree-filter "\"$treeFilter\"")
+		#cmd+=(--tree-filter "\"$treeFilter\"")
 		cmd+=(--index-filter "\"$indexFilter\"")
 	else
-		cmd+=(--tree-filter "'rm -rf \"$file\"'")
+		#cmd+=(--tree-filter "'rm -rf \"$file\"'")
 		cmd+=(--index-filter "'git rm -rf --cached --ignore-unmatch \"$file\"'")
 	fi
 	cmd+=(--tag-name-filter cat -- --all)
@@ -155,7 +198,7 @@ GIT_FILTER_ORPHANS_GC(){
 	fi
 	echo 'expiring reflog'
 	git reflog expire --expire=now --all
-	git gc --prune=now --aggressive
+	git gc --prune=now 
 	rm -rf .git/refs/original
 }
 
@@ -230,6 +273,7 @@ GIT_FILTER_ORPHANS_CLONE(){
 GIT_FILTER_ORPHANS_PARSE(){
 	argCount=${#args[@]}
 	tmp=""
+	declare -A branches
 	#no args, show help
 	if [ $argCount -eq 0 ]; then
 		GIT_FILTER_ORPHANS_HELP
@@ -243,6 +287,11 @@ GIT_FILTER_ORPHANS_PARSE(){
 		fi
 		case "${args[0]}" in
 			find)
+				if [ $argCount -eq 3 ] && [ "${args[1]}" == "--from" ]; then
+					GIT_FILTER_ORPHANS_FIND_BRANCHES "${args[2]}"
+				else
+					GIT_FILTER_ORPHANS_FIND_BRANCHES
+				fi
 				GIT_FILTER_ORPHANS_FIND
 				;;
 			gc)
@@ -360,6 +409,7 @@ eradicate them from your git history and repo completely.
 COMMANDS
 --------
   find         -find all orphan objects and store them in a list($SORT_FILE)
+    --from EPOCH -index branches from this time till now, will consider older branch objects orphans
   update       -update your new repo and force push to remote
   clone        -make a backup of your current repo and clone from it in: $REPO_ROOT
   gc           -run manual garbage collection on repo (potentially dangerous)
