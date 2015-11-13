@@ -229,13 +229,33 @@ GIT_FILTER_ORPHANS_CHECKOUT(){
 	git checkout "$MAIN_BRANCH"
 }
 
+GIT_FILTER_ORPHANS_RESET_REPO(){
+	#clone the current version and reset remote repo
+	git bundle .tmp.clone
+	#copy config
+	cd .tmp.clone && rm -rf .git
+	cp -rf ../.git .
+	initialCommit=`git rev-list --max-parents=0 --abbrev-commit HEAD | tail -n1`
+	git reset --hard $initialCommit
+	#delete tags
+	git tag -l | while read tag; do
+		git push origin ":$tag"
+	done
+	cd .. && rm -rf .tmp.clone
+}
+
 #update all refs and tags on remote
 GIT_FILTER_ORPHANS_UPDATE(){
 	echo "Updating repo: $REPO"
+	echo "Resetting back to initial commit"
+	GIT_FILTER_ORPHANS_RESET_REPO
+	echo "Running garbage collector..."
 	if [ -d ".git/refs/original" ]; then
 		GIT_FILTER_ORPHANS_GC
 	fi
-	git push --mirror
+	echo "Updating refs..."
+	git push --all --force
+	git push --tags --force
 }
 
 #refresh a filtered repo, move a backup of the current and reclone into CWD
@@ -413,7 +433,7 @@ COMMANDS
   update       -update your new repo and force push to remote
   clone        -make a backup of your current repo and clone from it in: $REPO_ROOT
   gc           -run manual garbage collection on repo (potentially dangerous)
-  rebase       -similar to checkout, but used to important rewrites already made to a remote repo
+  rebase       -similar to checkout, but used to import rewrites already made to a remote repo
                 so you don't need to reclone the entire repo again
   checkout     -checkout all remote branches, !IMPORTANT - this must be done
                 before you filter in order to filter all branches properly for push
