@@ -238,10 +238,12 @@ GIT_FILTER_ORPHANS_RESET_REPO(){
 	initialCommit=`git rev-list --max-parents=0 --abbrev-commit HEAD | tail -n1`
 	git reset --hard $initialCommit
 	#delete tags
+	set +e
 	git tag -l | while read tag; do
 		echo "deleting: $tag"
 		git push origin ":$tag" 2> /dev/null
 	done
+	set -e
 	git push --all --force
 	cd .. && rm -rf .tmp.clone
 }
