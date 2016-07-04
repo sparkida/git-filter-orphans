@@ -214,8 +214,10 @@ GIT_FILTER_ORPHANS_CHECKOUT(){
 	git fetch --tags
 	git fetch --all
 	set +e
-	git branch -r | tail -n +2 | while read remote;	do
-		branch=${remote#*/}
+	git branch -r | sed 's/origin\/HEAD.*//' | cut -d'/' -f2 | while read branch; do
+        if [ ${#branch} -eq 0 ]; then
+            continue
+        fi
 		git checkout "$branch" 2> /dev/null
 		if $rebase; then
 			if [ "$branch" == "$MAIN_BRANCH" ]; then
