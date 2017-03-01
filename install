@@ -1,0 +1,2 @@
+sudo ln -s `pwd`/git-filter-orphans /usr/local/bin/gfo
+echo 'Use "gfo" to show help'

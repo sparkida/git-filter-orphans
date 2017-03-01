@@ -1,10 +1,17 @@
 
-Git-filter-orphans
-==================
+GFO (Git-filter-orphans)
+========================
 
 Git-filter-orphans will find all your orphaned objects and
 eradicate them from your git history and repo completely.
 
+
+INSTALL gfo
+-----------
+```
+cd && git clone https://github.com/sparkida/git-filter-orphans gfo
+. ~/gfo/install
+```
 
 COMMANDS
 --------
@@ -30,12 +37,6 @@ COMMANDS
   Note: might be a good idea to test this on a cloned version of your repo
 
 
-INSTALL gfo
------------
-```
-cd && git clone https://github.com/sparkida/git-filter-orphans
-cd /usr/bin && sudo ln -s ~/git-filter-orphans/git-filter-orphans gfo
-```
 
 EXAMPLES
 --------
